@@ -238,6 +238,11 @@ textarea{min-height:84px;resize:vertical}
 .drop.has>.ci,.drop.has>b,.drop.has>.hint{display:none}
 .drop.has{border-style:solid;border-color:var(--pri)}
 
+.sheet-back{position:fixed;inset:0;z-index:45;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--card);width:100%;max-width:640px;border-radius:24px 24px 0 0;padding:20px 16px calc(16px + env(safe-area-inset-bottom,0px));display:grid;gap:4px}
+.sheet h3{font-size:17px;margin-bottom:6px}
+.sheet .btn{width:100%}
+
 </style>
 </head>
 <body>
@@ -281,6 +286,12 @@ var Store=(function(){
         .then(function(){return F.setDoc(F.doc(db,'reports',pub.id),data)});
     },
     remove:function(id){return F.deleteDoc(F.doc(db,'reports',id)).then(function(){return F.deleteDoc(F.doc(db,'contacts',id))})},
+    resolve:function(id,via){
+      return F.updateDoc(F.doc(db,'reports',id),{status:'reunited',via:via,resolvedAt:F.serverTimestamp(),photo:null})
+        .then(function(){return F.deleteDoc(F.doc(db,'contacts',id))});
+    },
+    flag:function(id,reason){return F.setDoc(F.doc(db,'flags',id+'_'+uid),{reportId:id,uid:uid,reason:reason,ts:F.serverTimestamp()})},
+    logContact:function(id){F.setDoc(F.doc(F.collection(db,'events')),{type:'contact',reportId:id,uid:uid,ts:F.serverTimestamp()}).catch(function(){})},
     getContact:function(id){return F.getDoc(F.doc(db,'contacts',id)).then(function(s){return s.exists()?s.data():null})},
     isMine:function(r){return !!uid&&r.ownerUid===uid}
   };
@@ -340,6 +351,8 @@ en:{
  del:'Found / remove',delSure:'Sure? Tap again',removed:'Report removed.',zoom:'Enlarge photo',
  allS:'Found and missing reports, newest first.',fAll:'All',fFound:'Found',fMiss:'Missing',
  allEmpty:'No reports yet.',allEmptyS:'Create the first report from the Home tab.',
+ resT:'What happened to this case?',resWapsi:'Found through Wapsi',resOther:'Found another way',resDel:'Just delete my report',resDone:'Thank you. This report is now closed.',
+ flagBtn:'Report',flagT:'Why are you reporting this?',flagFake:'Fake or misleading',flagPhoto:'Inappropriate photo',flagSpam:'Spam or scam',flagPriv:'Privacy problem or misuse',flagDone:'Thanks. Your report was sent for review.',flagErr:'Could not send. You may have reported this already.',cancel:'Cancel',
  setupT:'Firebase is not set up yet',setupS:'Open <code>firebase-config.js</code> and paste your project’s settings. All steps are in <code>README.md</code>.'
 },
 ur:{
@@ -393,6 +406,8 @@ ur:{
  del:'مل گیا / ہٹائیں',delSure:'پکا؟ دوبارہ دبائیں',removed:'رپورٹ ہٹا دی گئی۔',zoom:'تصویر بڑی کریں',
  allS:'ملے ہوئے اور گمشدہ دونوں رپورٹس، نئی پہلے۔',fAll:'سب',fFound:'ملے ہوئے',fMiss:'گمشدہ',
  allEmpty:'ابھی کوئی رپورٹ نہیں ہے۔',allEmptyS:'ہوم ٹیب سے پہلی رپورٹ بنائیں۔',
+ resT:'اس کیس کا کیا ہوا؟',resWapsi:'واپسی کے ذریعے مل گیا',resOther:'کسی اور طریقے سے مل گیا',resDel:'بس میری رپورٹ ہٹا دیں',resDone:'شکریہ۔ یہ رپورٹ اب بند ہو گئی۔',
+ flagBtn:'شکایت',flagT:'آپ یہ شکایت کیوں کر رہے ہیں؟',flagFake:'جعلی یا گمراہ کن',flagPhoto:'نامناسب تصویر',flagSpam:'سپیم یا دھوکا',flagPriv:'پرائیویسی کا مسئلہ یا غلط استعمال',flagDone:'شکریہ۔ آپ کی شکایت جائزے کے لیے بھیج دی گئی۔',flagErr:'بھیجی نہیں جا سکی۔ ہو سکتا ہے آپ پہلے شکایت کر چکے ہوں۔',cancel:'منسوخ',
  setupT:'فائر بیس ابھی سیٹ اپ نہیں ہوا',setupS:'<code>firebase-config.js</code> کھولیں اور اپنے پروجیکٹ کی سیٹنگز پیسٹ کریں۔ پورے قدم <code>README.md</code> میں ہیں۔'
 }};
 
@@ -461,7 +476,7 @@ function sanitize(r){
   return{id:str(String(r.id),60),type:r.type==='found'?'found':'missing',name:str(r.name,100),gender:(r.gender==='m'||r.gender==='f')?r.gender:'',
     age:(age>0&&age<120)?age:null,dress:str(r.dress,300),area:str(r.area,200),details:str(r.details,1000),
     photo:(typeof r.photo==='string'&&r.photo.length<300000&&PHOTO_RE.test(r.photo))?r.photo:null,
-    geo:g,ts:+r.ts||Date.now(),ownerUid:str(r.ownerUid,80),demo:!!r.demo,contactName:str(r.contactName,60),contact:str(r.contact,30)};
+    geo:g,ts:+r.ts||Date.now(),ownerUid:str(r.ownerUid,80),demo:!!r.demo,status:(r.status==='reunited')?'reunited':'active',contactName:str(r.contactName,60),contact:str(r.contact,30)};
 }
 
 /* ================= matching ================= */
@@ -490,7 +505,7 @@ function score(q,c){
   return Math.round(s);
 }
 function findMatches(q,type){
-  return reports.filter(function(r){return r.type===type&&r.id!==q.id})
+  return reports.filter(function(r){return r.type===type&&r.id!==q.id&&r.status!=='reunited'})
     .map(function(r){return{r:r,s:score(q,r)}})
     .filter(function(x){return x.s!==null&&x.s>=20})
     .sort(function(a,b){return b.s-a.s});
@@ -549,7 +564,7 @@ function chooser(){
 function setup(){
   app.innerHTML='<div class="setup"><div class="sec"><div class="sech"><span class="ib2">'+ic('alert',18)+'</span>'+t('setupT')+'</div><p class="lead">'+t('setupS')+'</p></div></div>';
 }
-function cnt(type){return loaded?String(reports.filter(function(r){return r.type===type}).length):'–'}
+function cnt(type){return loaded?String(reports.filter(function(r){return r.type===type&&r.status!=='reunited'}).length):'–'}
 function cta(kind,icon,tt,ss){
   return '<button class="cta '+kind+'" data-go="'+(kind==='found'?'found':'missing')+'"><span class="ico">'+ic(icon,26)+'</span><span><b>'+tt+'</b><small>'+ss+'</small></span><span class="chev">'+ic('chev',22,'flip')+'</span></button>';
 }
@@ -631,7 +646,7 @@ function getGeo(){
 function submit(type){
   var pub={id:Store.newId(),type:type,name:$('name').value.trim().slice(0,100),gender:gender,age:parseInt($('age').value,10)||null,
     dress:$('dress').value.trim().slice(0,300),area:$('area').value.trim().slice(0,200),details:$('details').value.trim().slice(0,1000),
-    geo:geo,photo:photo,ts:Date.now()};
+    geo:geo,photo:photo,ts:Date.now(),status:'active'};
   var priv={contactName:$('cname').value.trim().slice(0,60),contact:$('contact').value.trim().slice(0,30)};
   if(priv.contact.replace(/\D/g,'').length<7){toast(t('errPhone'));$('contact').focus();return}
   if(!pub.photo&&!pub.name&&!pub.dress&&!pub.area&&!pub.details){toast(t('errEmpty'));return}
@@ -679,7 +694,8 @@ function card(r,s,canDelete){
    '<div style="grid-column:1/-1">'+contactBlock(r)+
    '<div class="actions"><button class="btn small" data-reveal="'+esc(r.id)+'">'+ic('phone',16)+(contacts[r.id]?t('hide'):t('reveal'))+'</button>'+
    (ml?'<a class="btn sec small" href="'+esc(ml)+'" target="_blank" rel="noopener noreferrer">'+ic('map',16)+t('map')+'</a>':'')+
-   (canDelete&&Store.isMine(r)?'<button class="btn danger small" data-del="'+esc(r.id)+'">'+ic('trash',16)+(pendingDelete===r.id?t('delSure'):t('del'))+'</button>':'')+
+   (canDelete&&Store.isMine(r)?'<button class="btn danger small" data-resolve="'+esc(r.id)+'">'+ic('check',16)+t('del')+'</button>':'')+
+   (Store.mode==='firebase'&&!Store.isMine(r)?'<button class="btn sec small" data-flag="'+esc(r.id)+'">'+ic('alert',16)+t('flagBtn')+'</button>':'')+
    '</div></div></article>';
 }
 function findReport(id){return reports.filter(function(r){return r.id===id})[0]||(lastRes&&lastRes.r.id===id?lastRes.r:null)}
@@ -688,7 +704,7 @@ function zoomImg(src){
   d.innerHTML='<img alt=""><button aria-label="'+esc(t('close'))+'">'+ic('close',22)+'</button>';
   d.querySelector('img').src=src;d.onclick=function(){d.remove()};document.body.appendChild(d);
 }
-document.addEventListener('keydown',function(e){if(e.key==='Escape'){var l=document.querySelector('.lightbox');if(l)l.remove()}});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){var l=document.querySelector('.lightbox,.sheet-back');if(l)l.remove()}});
 function bindCards(){
   Array.prototype.forEach.call(app.querySelectorAll('[data-zoom]'),function(b){b.onclick=function(){var r=findReport(b.getAttribute('data-zoom'));if(r&&r.photo)zoomImg(r.photo)}});
   Array.prototype.forEach.call(app.querySelectorAll('[data-reveal]'),function(b){b.onclick=function(){
@@ -696,15 +712,32 @@ function bindCards(){
     if(contacts[id]){delete contacts[id];rerender();return}
     b.disabled=true;
     Promise.resolve(Store.getContact(id)).then(function(c){
+      try{Store.logContact(id)}catch(e){}
       contacts[id]=c?{contactName:str(c.contactName,60),contact:str(c.contact,30)}:{none:true};rerender();
     }).catch(function(){toast(t('connErr'));b.disabled=false});
   }});
-  Array.prototype.forEach.call(app.querySelectorAll('[data-del]'),function(b){b.onclick=function(){
-    var id=b.getAttribute('data-del');
-    if(pendingDelete!==id){pendingDelete=id;rerender();return}
-    pendingDelete=null;
-    Promise.resolve(Store.remove(id)).then(function(){toast(t('removed'))}).catch(function(){toast(t('errSave'));rerender()});
+  Array.prototype.forEach.call(app.querySelectorAll('[data-resolve]'),function(b){b.onclick=function(){
+    var id=b.getAttribute('data-resolve');
+    sheet(t('resT'),[
+      {label:t('resWapsi'),cls:'',fn:function(){finish(Store.resolve(id,'wapsi'),t('resDone'))}},
+      {label:t('resOther'),cls:'sec',fn:function(){finish(Store.resolve(id,'other'),t('resDone'))}},
+      {label:t('resDel'),cls:'danger',fn:function(){finish(Store.remove(id),t('removed'))}}]);
   }});
+  Array.prototype.forEach.call(app.querySelectorAll('[data-flag]'),function(b){b.onclick=function(){
+    var id=b.getAttribute('data-flag');
+    sheet(t('flagT'),[['fake','flagFake'],['photo','flagPhoto'],['spam','flagSpam'],['privacy','flagPriv']].map(function(x){
+      return {label:t(x[1]),cls:'sec',fn:function(){Promise.resolve(Store.flag(id,x[0])).then(function(){toast(t('flagDone'))}).catch(function(){toast(t('flagErr'))})}}}));
+  }});
+}
+function finish(p,msg){Promise.resolve(p).then(function(){toast(msg)}).catch(function(){toast(t('errSave'))})}
+function sheet(title,opts){
+  var d=document.createElement('div');d.className='sheet-back';
+  d.innerHTML='<div class="sheet" role="dialog" aria-modal="true"><h3>'+esc(title)+'</h3><div class="sheet-opts"></div><button class="btn sec big" data-x>'+esc(t('cancel'))+'</button></div>';
+  var box=d.querySelector('.sheet-opts');
+  opts.forEach(function(o){var b=document.createElement('button');b.className='btn '+(o.cls||'')+' big';b.textContent=o.label;b.onclick=function(){d.remove();o.fn()};box.appendChild(b)});
+  d.querySelector('[data-x]').onclick=function(){d.remove()};
+  d.onclick=function(e){if(e.target===d)d.remove()};
+  document.body.appendChild(d);
 }
 function resultsView(){
   var r=lastRes.r,m=lastRes.matches,f=r.type==='found';
@@ -721,7 +754,7 @@ function resultsView(){
   bindCards();
 }
 function list(){
-  var arr=reports.filter(function(r){return filter==='all'||r.type===filter}).sort(function(a,b){return b.ts-a.ts});
+  var arr=reports.filter(function(r){return r.status!=='reunited'&&(filter==='all'||r.type===filter)}).sort(function(a,b){return b.ts-a.ts});
   var body;
   if(!loaded&&!storeErr)body='<div class="skel"></div><div class="skel"></div>';
   else if(arr.length)body=arr.map(function(r){return card(r,null,true)}).join('');
