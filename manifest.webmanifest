@@ -1,0 +1,14 @@
+{
+  "name": "Wapsi",
+  "short_name": "Wapsi",
+  "description": "Help reunite missing people with their families",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#073F30",
+  "theme_color": "#073F30",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
